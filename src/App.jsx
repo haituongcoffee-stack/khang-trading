@@ -78,20 +78,55 @@ async function ai(prompt,sys="You are a professional trading analyst. Be concise
 function usePrices(){
   const[prices,setPrices]=useState(()=>{
     const out={};
-    INSTRS.forEach((i,n)=>{const seed=(((Date.now()%1000)*(n+7)*13)%100)/100;const init=(seed-0.5)*0.8;out[i.id]={price:i.base*(1+init/100),change:init};});
+    INSTRS.forEach((i,n)=>{
+      const seed=(((Date.now()%1000)*(n+7)*13)%100)/100;
+      out[i.id]={price:i.base*(1+(seed-0.5)*0.008),change:(seed-0.5)*0.8,real:false};
+    });
     return out;
   });
-  useEffect(()=>{
-    const t=setInterval(()=>{
-      setPrices(prev=>{
-        const next={...prev};
-        INSTRS.forEach(i=>{const drift=(Math.random()-0.5)*0.00035;const np=next[i.id].price*(1+drift);next[i.id]={price:np,change:((np-i.base)/i.base)*100};});
-        return next;
-      });
-    },3500);
-    return()=>clearInterval(t);
+  const[isReal,setIsReal]=useState(false);
+
+  const fetchReal=useCallback(async()=>{
+    try{
+      const r=await fetch("/api/prices");
+      const d=await r.json();
+      if(d.prices&&Object.keys(d.prices).length>=4){
+        setPrices(prev=>{
+          const next={...prev};
+          Object.entries(d.prices).forEach(([id,p])=>{next[id]={...p,real:true};});
+          return next;
+        });
+        setIsReal(true);
+        return true;
+      }
+    }catch{}
+    return false;
   },[]);
-  return prices;
+
+  useEffect(()=>{
+    fetchReal();
+    let simTimer=null;
+    const startSim=()=>{
+      simTimer=setInterval(()=>{
+        setPrices(prev=>{
+          const next={...prev};
+          INSTRS.forEach(i=>{
+            if(!next[i.id].real){
+              const drift=(Math.random()-0.5)*0.00035;
+              const np=next[i.id].price*(1+drift);
+              next[i.id]={price:np,change:((np-i.base)/i.base)*100,real:false};
+            }
+          });
+          return next;
+        });
+      },3500);
+    };
+    startSim();
+    const realTimer=setInterval(fetchReal,60000);
+    return()=>{clearInterval(simTimer);clearInterval(realTimer);};
+  },[fetchReal]);
+
+  return{prices,isReal};
 }
 
 function ConfBar({value}){
@@ -101,67 +136,46 @@ function ConfBar({value}){
 function BiasTag({up,t}){return(<span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:3,letterSpacing:"0.08em",background:up?"rgba(29,184,122,0.12)":"rgba(230,57,70,0.12)",color:up?GREEN:RED,border:`1px solid ${up?"rgba(29,184,122,0.3)":"rgba(230,57,70,0.3)"}`}}>{up?t.bullish:t.bearish}</span>);}
 function Dots(){return(<div style={{display:"flex",gap:4,alignItems:"center",padding:"6px 0"}}>{[0,1,2].map(i=>(<div key={i} style={{width:5,height:5,borderRadius:"50%",background:GREEN,opacity:.5,animation:"ktP 1.2s ease-in-out infinite",animationDelay:`${i*.2}s`}}/>))}</div>);}
 function EdgeFactor({score,label}){const col=score>=65?GREEN:score>=40?AMBER:RED;return(<div style={{display:"flex",alignItems:"center",gap:14}}><div style={{width:64,height:64,borderRadius:"50%",border:`2px solid ${col}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:`${col}12`,flexShrink:0}}><span style={{fontSize:22,fontWeight:900,color:col,lineHeight:1}}>{score}</span></div><div><div style={{fontSize:9,color:DIM,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:3}}>Edge Factor</div><div style={{fontSize:12,color:col,fontWeight:700}}>{label}</div></div></div>);}
-
-function CapFlow({t}){
-  const max=Math.max(...CAP_FLOW.map(d=>Math.abs(d.v)));
-  return(<div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:18}}><div style={{fontSize:12,fontWeight:600,color:WHITE,marginBottom:14}}>{t.capitalFlow}</div>{CAP_FLOW.map(item=>{const pos=item.v>=0,pct=Math.abs(item.v)/max;return(<div key={item.l} style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}><span style={{width:50,fontSize:11,color:DIM}}>{item.l}</span><div style={{flex:1,height:4,background:BORDER,borderRadius:2,position:"relative"}}><div style={{position:"absolute",top:"-3px",left:"50%",width:1,height:10,background:BORDER}}/><div style={{position:"absolute",top:0,height:"100%",width:`${pct*50}%`,background:pos?GREEN:RED,borderRadius:2,left:pos?"50%":`${50-pct*50}%`}}/></div><span style={{width:42,fontSize:11,textAlign:"right",color:pos?GREEN:RED,fontFamily:"monospace"}}>{pos?"+":""}{item.v.toFixed(2)}</span></div>);})}</div>);
-}
+function CapFlow({t}){const max=Math.max(...CAP_FLOW.map(d=>Math.abs(d.v)));return(<div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:18}}><div style={{fontSize:12,fontWeight:600,color:WHITE,marginBottom:14}}>{t.capitalFlow}</div>{CAP_FLOW.map(item=>{const pos=item.v>=0,pct=Math.abs(item.v)/max;return(<div key={item.l} style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}><span style={{width:50,fontSize:11,color:DIM}}>{item.l}</span><div style={{flex:1,height:4,background:BORDER,borderRadius:2,position:"relative"}}><div style={{position:"absolute",top:"-3px",left:"50%",width:1,height:10,background:BORDER}}/><div style={{position:"absolute",top:0,height:"100%",width:`${pct*50}%`,background:pos?GREEN:RED,borderRadius:2,left:pos?"50%":`${50-pct*50}%`}}/></div><span style={{width:42,fontSize:11,textAlign:"right",color:pos?GREEN:RED,fontFamily:"monospace"}}>{pos?"+":""}{item.v.toFixed(2)}</span></div>);})}</div>);}
 
 function DashboardTab({t,lang,prices}){
-  const[brief,setBrief]=useState(null);
-  const[loading,setLoading]=useState(true);
+  const[brief,setBrief]=useState(null);const[loading,setLoading]=useState(true);
   const timeStr=new Date().toLocaleTimeString("vi-VN",{hour:"2-digit",minute:"2-digit"});
   useEffect(()=>{
     setLoading(true);setBrief(null);
-    const isVI=lang==="VI";
-    const prompt=isVI
-      ?`Tóm tắt phiên NY hôm nay cho trader NQ và Vàng. CHỈ trả về JSON hợp lệ, không có text khác:\n{"risk_tone":"cụm từ ngắn","key_driver":"động lực chính","watch":"sự kiện cần theo dõi","avoid":"hành vi cần tránh","overall_bias":"Tăng Nhẹ","confidence_index":72,"briefing":"2 câu tổng quan"}`
-      :`Session brief for today's NY session for NQ and Gold traders. Return ONLY valid JSON, nothing else:\n{"risk_tone":"short phrase","key_driver":"main driver","watch":"specific event or level","avoid":"specific behavior","overall_bias":"Moderately Bullish","confidence_index":72,"briefing":"2-sentence narrative"}`;
-    ai(prompt,"Return ONLY valid JSON. No markdown. No text before or after. Just the JSON.").then(txt=>{
-      setBrief(parseJSON(txt));
-      setLoading(false);
-    });
+    const prompt=lang==="VI"
+      ?`Tóm tắt phiên NY hôm nay cho trader NQ và Vàng. CHỈ trả về JSON hợp lệ:\n{"risk_tone":"cụm từ ngắn","key_driver":"động lực chính","watch":"sự kiện cần theo dõi","avoid":"hành vi cần tránh","overall_bias":"Tăng Nhẹ","confidence_index":72,"briefing":"2 câu tổng quan"}`
+      :`Session brief for today's NY session for NQ and Gold traders. Return ONLY valid JSON:\n{"risk_tone":"short phrase","key_driver":"main driver","watch":"specific event or level","avoid":"specific behavior","overall_bias":"Moderately Bullish","confidence_index":72,"briefing":"2-sentence narrative"}`;
+    ai(prompt,"Return ONLY valid JSON. No markdown. No text before or after. Just the JSON.").then(txt=>{setBrief(parseJSON(txt));setLoading(false);});
   },[lang]);
-
   return(<div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:20}}><div>
     <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,padding:26,marginBottom:20}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <div style={{width:7,height:7,borderRadius:"50%",background:GREEN,boxShadow:`0 0 8px ${GREEN}`}}/>
-          <span style={{fontSize:10,color:GREEN,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase"}}>AI · SESSION BRIEF</span>
-        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:7,height:7,borderRadius:"50%",background:GREEN,boxShadow:`0 0 8px ${GREEN}`}}/><span style={{fontSize:10,color:GREEN,fontWeight:700,letterSpacing:"0.14em",textTransform:"uppercase"}}>AI · SESSION BRIEF</span></div>
         <span style={{fontSize:10,color:DIM,fontFamily:"monospace"}}>{t.sessionLabel} · {timeStr}</span>
       </div>
       {loading?(<div style={{padding:"16px 0"}}><Dots/><p style={{color:DIM,fontSize:12,marginTop:8}}>{t.loading}</p></div>):brief?(
-        <>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18,padding:"10px 14px",background:"rgba(29,184,122,0.06)",border:`1px solid ${BORDER}`,borderRadius:8}}>
-            <span style={{fontSize:11,color:DIM}}>{t.overall}:</span>
-            <span style={{fontSize:12,fontWeight:600,color:GREEN,background:"rgba(29,184,122,0.12)",padding:"2px 12px",borderRadius:20,border:"1px solid rgba(29,184,122,0.25)"}}>{brief.overall_bias}</span>
-            <span style={{marginLeft:"auto",fontSize:11,color:DIM}}>Confidence: <span style={{color:TEXT}}>{brief.confidence_index}%</span></span>
+        <><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18,padding:"10px 14px",background:"rgba(29,184,122,0.06)",border:`1px solid ${BORDER}`,borderRadius:8}}>
+          <span style={{fontSize:11,color:DIM}}>{t.overall}:</span>
+          <span style={{fontSize:12,fontWeight:600,color:GREEN,background:"rgba(29,184,122,0.12)",padding:"2px 12px",borderRadius:20,border:"1px solid rgba(29,184,122,0.25)"}}>{brief.overall_bias}</span>
+          <span style={{marginLeft:"auto",fontSize:11,color:DIM}}>Confidence: <span style={{color:TEXT}}>{brief.confidence_index}%</span></span>
+        </div>
+        <p style={{fontSize:13,color:TEXT,lineHeight:1.75,marginBottom:20}}>{brief.briefing}</p>
+        {[{k:"risk_tone",label:t.riskTone,col:"#60a5fa",icon:"◉"},{k:"key_driver",label:t.keyDriver,col:GREEN,icon:"▲"},{k:"watch",label:t.watch,col:AMBER,icon:"◈"},{k:"avoid",label:t.avoid,col:RED,icon:"⚠"}].map(row=>(
+          <div key={row.k} style={{display:"flex",gap:14,padding:"12px 0",borderBottom:`1px solid ${BORDER}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,minWidth:120,flexShrink:0}}><span style={{color:row.col,fontSize:11}}>{row.icon}</span><span style={{fontSize:9,color:row.col,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase"}}>{row.label}</span></div>
+            <span style={{fontSize:12,color:TEXT,lineHeight:1.6}}>{brief[row.k]}</span>
           </div>
-          <p style={{fontSize:13,color:TEXT,lineHeight:1.75,marginBottom:20}}>{brief.briefing}</p>
-          {[{k:"risk_tone",label:t.riskTone,col:"#60a5fa",icon:"◉"},{k:"key_driver",label:t.keyDriver,col:GREEN,icon:"▲"},{k:"watch",label:t.watch,col:AMBER,icon:"◈"},{k:"avoid",label:t.avoid,col:RED,icon:"⚠"}].map(row=>(
-            <div key={row.k} style={{display:"flex",gap:14,padding:"12px 0",borderBottom:`1px solid ${BORDER}`}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,minWidth:120,flexShrink:0}}>
-                <span style={{color:row.col,fontSize:11}}>{row.icon}</span>
-                <span style={{fontSize:9,color:row.col,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase"}}>{row.label}</span>
-              </div>
-              <span style={{fontSize:12,color:TEXT,lineHeight:1.6}}>{brief[row.k]}</span>
-            </div>
-          ))}
-        </>
+        ))}</>
       ):<p style={{color:DIM,fontSize:13}}>{lang==="VI"?"Đang tải...":"Loading..."}</p>}
     </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
-      {INSTRS.slice(0,4).map(ins=>{
-        const pr=prices[ins.id];if(!pr)return null;
-        return(<div key={ins.id} style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:18,transition:"border-color 0.2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="rgba(29,184,122,0.3)"} onMouseLeave={e=>e.currentTarget.style.borderColor=BORDER}>
-          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,fontWeight:700,color:WHITE}}>{ins.label}</span><BiasTag up={pr.change>=0} t={t}/></div>
-          <div style={{fontSize:20,fontWeight:800,color:WHITE,fontFamily:"monospace",marginBottom:3}}>{pr.price.toFixed(ins.dec).replace(/\B(?=(\d{3})+(?!\d))/g,",")}</div>
-          <div style={{fontSize:12,color:pr.change>=0?GREEN:RED,fontFamily:"monospace",marginBottom:12}}>{pr.change>=0?"+":""}{pr.change.toFixed(2)}%</div>
-          <ConfBar value={ins.conf}/>
-        </div>);
-      })}
+      {INSTRS.slice(0,4).map(ins=>{const pr=prices[ins.id];if(!pr)return null;return(<div key={ins.id} style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:18,transition:"border-color 0.2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="rgba(29,184,122,0.3)"} onMouseLeave={e=>e.currentTarget.style.borderColor=BORDER}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,fontWeight:700,color:WHITE}}>{ins.label}</span><BiasTag up={pr.change>=0} t={t}/></div>
+        <div style={{fontSize:20,fontWeight:800,color:WHITE,fontFamily:"monospace",marginBottom:3}}>{pr.price.toFixed(ins.dec).replace(/\B(?=(\d{3})+(?!\d))/g,",")}</div>
+        <div style={{fontSize:12,color:pr.change>=0?GREEN:RED,fontFamily:"monospace",marginBottom:12}}>{pr.change>=0?"+":""}{pr.change.toFixed(2)}%</div>
+        <ConfBar value={ins.conf}/>
+      </div>);})}
     </div>
   </div>
   <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -169,28 +183,21 @@ function DashboardTab({t,lang,prices}){
     <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:18}}>
       <div style={{fontSize:12,fontWeight:600,color:WHITE,marginBottom:14}}>{t.sessionTimes}</div>
       {[{label:t.nyOpen,time:"21:30",active:false},{label:t.silverBullet,time:"21:00–22:00",active:true},{label:t.lonClose,time:"19:00",active:false},{label:t.nyClose,time:"04:00 +1",active:false}].map(s=>(
-        <div key={s.label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${BORDER}`}}>
-          <span style={{fontSize:12,color:s.active?GREEN:DIM}}>{s.label}</span>
-          <span style={{fontSize:12,fontFamily:"monospace",color:s.active?GREEN:TEXT,fontWeight:s.active?700:400}}>{s.time}</span>
-        </div>
+        <div key={s.label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${BORDER}`}}><span style={{fontSize:12,color:s.active?GREEN:DIM}}>{s.label}</span><span style={{fontSize:12,fontFamily:"monospace",color:s.active?GREEN:TEXT,fontWeight:s.active?700:400}}>{s.time}</span></div>
       ))}
     </div>
   </div></div>);
 }
 
 function MacroDeskTab({t,lang,prices}){
-  const[analyses,setAnalyses]=useState({});
-  const[loading,setLoading]=useState({NQ:true,XAUUSD:true,US30:true,VIX:true,DXY:true,BTC:true});
-  const[expanded,setExpanded]=useState({});
+  const[analyses,setAnalyses]=useState({});const[loading,setLoading]=useState({NQ:true,XAUUSD:true,US30:true,VIX:true,DXY:true,BTC:true});const[expanded,setExpanded]=useState({});
   const[update]=useState(new Date().toLocaleTimeString("vi-VN",{hour:"2-digit",minute:"2-digit"}));
   useEffect(()=>{
     const init={};INSTRS.forEach(i=>{init[i.id]=true;});setLoading(init);
-    INSTRS.forEach((ins,idx)=>{
-      setTimeout(()=>{
-        const p=lang==="VI"?`${ins.prompt} Phân tích 2-3 câu bằng tiếng Việt.`:ins.prompt;
-        ai(p).then(txt=>{setAnalyses(prev=>({...prev,[ins.id]:txt}));setLoading(prev=>({...prev,[ins.id]:false}));});
-      },idx*400);
-    });
+    INSTRS.forEach((ins,idx)=>{setTimeout(()=>{
+      const p=lang==="VI"?`${ins.prompt} Phân tích bằng tiếng Việt.`:ins.prompt;
+      ai(p).then(txt=>{setAnalyses(prev=>({...prev,[ins.id]:txt}));setLoading(prev=>({...prev,[ins.id]:false}));});
+    },idx*400);});
   },[lang]);
   const upCount=INSTRS.filter(i=>prices[i.id]?.change>=0).length;
   const sentiment=upCount>=4?(lang==="VI"?"Tăng Nhẹ":"Moderately Bullish"):upCount<=2?(lang==="VI"?"Giảm Nhẹ":"Moderately Bearish"):(lang==="VI"?"Hỗn Hợp":"Mixed");
@@ -204,25 +211,21 @@ function MacroDeskTab({t,lang,prices}){
       </div>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
-      {INSTRS.map(ins=>{
-        const pr=prices[ins.id];if(!pr)return null;
-        const txt=analyses[ins.id]||"";const short=txt.length>150?txt.slice(0,147)+"...":txt;const isExp=expanded[ins.id];
+      {INSTRS.map(ins=>{const pr=prices[ins.id];if(!pr)return null;const txt=analyses[ins.id]||"";const short=txt.length>150?txt.slice(0,147)+"...":txt;const isExp=expanded[ins.id];
         return(<div key={ins.id} style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:20,transition:"border-color 0.2s,transform 0.15s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(29,184,122,0.35)";e.currentTarget.style.transform="translateY(-1px)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor=BORDER;e.currentTarget.style.transform="none";}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
             <div><div style={{fontSize:14,fontWeight:700,color:WHITE}}>{ins.label}</div><div style={{fontSize:20,fontWeight:800,color:WHITE,fontFamily:"monospace",marginTop:2}}>{pr.price.toFixed(ins.dec).replace(/\B(?=(\d{3})+(?!\d))/g,",")}</div></div>
             <div style={{textAlign:"right"}}><div style={{fontSize:12,fontFamily:"monospace",color:pr.change>=0?GREEN:RED,marginBottom:5}}>{pr.change>=0?"+":""}{pr.change.toFixed(2)}%</div><BiasTag up={pr.change>=0} t={t}/></div>
           </div>
           <ConfBar value={ins.conf}/>
-          <div style={{fontSize:10,color:DIM,marginTop:5,marginBottom:12}}>↻ {t.lastUpdate}: {1+Math.floor(Math.random()*8)}m ago</div>
+          <div style={{fontSize:10,color:pr.real?GREEN:DIM,marginTop:5,marginBottom:12}}>{pr.real?"● LIVE":"● SIM"} · {t.lastUpdate}: {1+Math.floor(Math.random()*5)}m ago</div>
           <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:12}}>
             <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:8}}><div style={{width:5,height:5,borderRadius:"50%",background:GREEN}}/><span style={{fontSize:9,color:GREEN,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase"}}>{t.aiAnalysis}</span></div>
-            {loading[ins.id]?<Dots/>:(
-              <><p style={{fontSize:12,color:"#8fb39e",lineHeight:1.7,margin:0}}>{isExp?txt:short}{txt.length>150&&!isExp&&(<span style={{color:GREEN,cursor:"pointer",marginLeft:4}} onClick={()=>setExpanded(p=>({...p,[ins.id]:true}))}>{t.readMore}</span>)}</p>
-              <div style={{display:"flex",gap:8,marginTop:14}}>
-                <button style={{flex:1,padding:"7px 0",fontSize:11,border:`1px solid ${BORDER}`,borderRadius:6,background:"transparent",color:DIM,cursor:"pointer",fontFamily:"inherit"}}>{t.quickOverview}</button>
-                <button style={{flex:1,padding:"7px 0",fontSize:11,border:`1px solid ${GREEN}`,borderRadius:6,background:"rgba(29,184,122,0.1)",color:GREEN,cursor:"pointer",fontWeight:600,fontFamily:"inherit"}}>{t.deepDive}</button>
-              </div></>
-            )}
+            {loading[ins.id]?<Dots/>:(<><p style={{fontSize:12,color:"#8fb39e",lineHeight:1.7,margin:0}}>{isExp?txt:short}{txt.length>150&&!isExp&&(<span style={{color:GREEN,cursor:"pointer",marginLeft:4}} onClick={()=>setExpanded(p=>({...p,[ins.id]:true}))}>{t.readMore}</span>)}</p>
+            <div style={{display:"flex",gap:8,marginTop:14}}>
+              <button style={{flex:1,padding:"7px 0",fontSize:11,border:`1px solid ${BORDER}`,borderRadius:6,background:"transparent",color:DIM,cursor:"pointer",fontFamily:"inherit"}}>{t.quickOverview}</button>
+              <button style={{flex:1,padding:"7px 0",fontSize:11,border:`1px solid ${GREEN}`,borderRadius:6,background:"rgba(29,184,122,0.1)",color:GREEN,cursor:"pointer",fontWeight:600,fontFamily:"inherit"}}>{t.deepDive}</button>
+            </div></>)}
           </div>
         </div>);
       })}
@@ -235,11 +238,10 @@ function MacroViewTab({t,lang,prices}){
   const ins=INSTRS.find(i=>i.id===sel);const pr=prices[sel];
   useEffect(()=>{
     setLoading(true);setData(null);
-    const isVI=lang==="VI";
-    const prompt=isVI
-      ?`Phân tích macro cho ${ins.label}. CHỈ trả về JSON:\n{"ai_overview":"2-3 câu","edge_score":55,"edge_label":"Cơ Hội Tốt","market_mood":"RỦI RO CAO","mood_desc":"2 câu","policy":"THẮT CHẶT","policy_desc":"2 câu","outlook":"2 câu","flow":"LÀNH MẠNH","bearing":"XU HƯỚNG","pulse":"GIAO DỊCH ĐƯỢC","news":["tin1","tin2","tin3"],"support":"mức","resistance":"mức","bias":"MUA"}`
-      :`Macro analysis for ${ins.label}. Return ONLY valid JSON:\n{"ai_overview":"2-3 sentences","edge_score":55,"edge_label":"High Confidence","market_mood":"RISK-ON","mood_desc":"2 sentences","policy":"HAWKISH","policy_desc":"2 sentences","outlook":"2 sentences","flow":"HEALTHY","bearing":"TRENDING","pulse":"TRADEABLE","news":["h1","h2","h3"],"support":"level","resistance":"level","bias":"LONG"}`;
-    ai(prompt,"Return ONLY valid JSON. No markdown. No text before or after.").then(txt=>{setData(parseJSON(txt));setLoading(false);});
+    const prompt=lang==="VI"
+      ?`Phân tích macro cho ${ins.label}. CHỈ JSON:\n{"ai_overview":"2-3 câu","edge_score":55,"edge_label":"Cơ Hội Tốt","market_mood":"RỦI RO CAO","mood_desc":"2 câu","policy":"THẮT CHẶT","policy_desc":"2 câu","outlook":"2 câu","flow":"LÀNH MẠNH","bearing":"XU HƯỚNG","pulse":"GIAO DỊCH ĐƯỢC","news":["tin1","tin2","tin3"],"support":"mức","resistance":"mức","bias":"MUA"}`
+      :`Macro analysis for ${ins.label}. ONLY JSON:\n{"ai_overview":"2-3 sentences","edge_score":55,"edge_label":"High Confidence","market_mood":"RISK-ON","mood_desc":"2 sentences","policy":"HAWKISH","policy_desc":"2 sentences","outlook":"2 sentences","flow":"HEALTHY","bearing":"TRENDING","pulse":"TRADEABLE","news":["h1","h2","h3"],"support":"level","resistance":"level","bias":"LONG"}`;
+    ai(prompt,"Return ONLY valid JSON. No markdown.").then(txt=>{setData(parseJSON(txt));setLoading(false);});
   },[sel,lang]);
   const moodUp=data?.market_mood?.includes("ON")||data?.market_mood?.includes("CAO");
   const moodDn=data?.market_mood?.includes("OFF")||data?.market_mood?.includes("THỦ");
@@ -254,7 +256,11 @@ function MacroViewTab({t,lang,prices}){
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
         <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:22}}>
           <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}><span style={{fontSize:32}}>{ins.flag}</span><div><div style={{fontSize:18,fontWeight:800,color:WHITE}}>{ins.label}</div><div style={{fontSize:10,color:DIM,textTransform:"uppercase",letterSpacing:"0.1em"}}>{ins.cat}</div></div></div>
-          <div style={{display:"flex",alignItems:"baseline",gap:12,marginBottom:14}}><span style={{fontSize:28,fontWeight:800,color:WHITE,fontFamily:"monospace"}}>{pr.price.toFixed(ins.dec).replace(/\B(?=(\d{3})+(?!\d))/g,",")}</span><span style={{fontSize:14,color:pr.change>=0?GREEN:RED,fontFamily:"monospace"}}>{pr.change>=0?"+":""}{pr.change.toFixed(2)}%</span></div>
+          <div style={{display:"flex",alignItems:"baseline",gap:12,marginBottom:14}}>
+            <span style={{fontSize:28,fontWeight:800,color:WHITE,fontFamily:"monospace"}}>{pr.price.toFixed(ins.dec).replace(/\B(?=(\d{3})+(?!\d))/g,",")}</span>
+            <span style={{fontSize:14,color:pr.change>=0?GREEN:RED,fontFamily:"monospace"}}>{pr.change>=0?"+":""}{pr.change.toFixed(2)}%</span>
+            {pr.real&&<span style={{fontSize:10,color:GREEN,background:"rgba(29,184,122,0.1)",padding:"2px 8px",borderRadius:10}}>LIVE</span>}
+          </div>
           <ConfBar value={ins.conf}/>
           {data&&!loading&&(<div style={{display:"flex",gap:10,marginTop:14}}>
             <div style={{padding:"8px 14px",borderRadius:7,background:`${GREEN}12`,border:`1px solid ${GREEN}35`}}><div style={{fontSize:9,color:GREEN,letterSpacing:"0.1em",marginBottom:2}}>{t.support}</div><div style={{fontSize:13,color:GREEN,fontFamily:"monospace",fontWeight:600}}>{data.support}</div></div>
@@ -277,7 +283,7 @@ function MacroViewTab({t,lang,prices}){
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
           <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:18}}>
-            {[{label:t.flow,val:data.flow,col:data.flow?.includes("HEAL")||data.flow?.includes("MẠNH")?GREEN:AMBER},{label:t.bearing,val:data.bearing,col:data.bearing?.includes("TREND")||data.bearing?.includes("XU")?GREEN:AMBER},{label:t.pulse,val:data.pulse,col:data.pulse?.includes("WILD")||data.pulse?.includes("BIẾN")?RED:data.pulse?.includes("QUIET")||data.pulse?.includes("YÊN")?DIM:GREEN}].map(row=>(<div key={row.label} style={{marginBottom:18}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={{fontSize:10,color:DIM,letterSpacing:"0.1em",textTransform:"uppercase"}}>{row.label}</span><span style={{fontSize:11,fontWeight:700,color:row.col}}>{row.val}</span></div><div style={{height:5,background:BORDER,borderRadius:3,position:"relative"}}><div style={{position:"absolute",top:0,height:"100%",width:"30%",background:row.col,borderRadius:3,left:"35%"}}/></div></div>))}
+            {[{label:t.flow,val:data.flow,col:data.flow?.includes("HEAL")||data.flow?.includes("MẠNH")?GREEN:AMBER},{label:t.bearing,val:data.bearing,col:data.bearing?.includes("TREND")||data.bearing?.includes("XU")?GREEN:AMBER},{label:t.pulse,val:data.pulse,col:data.pulse?.includes("WILD")||data.pulse?.includes("BIẾN")?RED:GREEN}].map(row=>(<div key={row.label} style={{marginBottom:18}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={{fontSize:10,color:DIM,letterSpacing:"0.1em",textTransform:"uppercase"}}>{row.label}</span><span style={{fontSize:11,fontWeight:700,color:row.col}}>{row.val}</span></div><div style={{height:5,background:BORDER,borderRadius:3,position:"relative"}}><div style={{position:"absolute",top:0,height:"100%",width:"30%",background:row.col,borderRadius:3,left:"35%"}}/></div></div>))}
           </div>
           <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:18}}>
             <div style={{fontSize:12,fontWeight:600,color:WHITE,marginBottom:14}}>{t.news}</div>
@@ -293,13 +299,10 @@ function CalendarTab({t,lang}){
   const[events,setEvents]=useState([]);const[loading,setLoading]=useState(true);
   useEffect(()=>{
     setLoading(true);setEvents([]);
-    const isVI=lang==="VI";
-    const prompt=isVI
-      ?`Lịch kinh tế hôm nay 9/5/2026 cho trader NQ và Vàng. CHỈ trả về JSON array hợp lệ, 9 sự kiện:\n[{"time":"HH:MM +7","currency":"USD","name":"tên","impact":"CAO","forecast":"gtri","previous":"gtri","analysis":"1 câu","confidence":72}]`
-      :`Economic calendar May 9 2026 for NQ and Gold traders. Return ONLY valid JSON array, 9 events:\n[{"time":"HH:MM GMT+7","currency":"USD","name":"event","impact":"HIGH","forecast":"val","previous":"val","analysis":"1 sentence","confidence":72}]`;
-    ai(prompt,"Return ONLY a valid JSON array. No markdown. No text before or after. Just the array starting with [").then(txt=>{
-      const parsed=parseJSON(txt);setEvents(Array.isArray(parsed)?parsed:[]);setLoading(false);
-    });
+    const prompt=lang==="VI"
+      ?`Lịch kinh tế hôm nay cho trader NQ và Vàng. CHỈ JSON array:\n[{"time":"HH:MM +7","currency":"USD","name":"tên","impact":"CAO","forecast":"gtri","previous":"gtri","analysis":"1 câu","confidence":72}]`
+      :`Today's economic calendar for NQ and Gold traders. ONLY JSON array:\n[{"time":"HH:MM GMT+7","currency":"USD","name":"event","impact":"HIGH","forecast":"val","previous":"val","analysis":"1 sentence","confidence":72}]`;
+    ai(prompt,"Return ONLY a valid JSON array starting with [").then(txt=>{const p=parseJSON(txt);setEvents(Array.isArray(p)?p:[]);setLoading(false);});
   },[lang]);
   const ic=imp=>imp==="HIGH"||imp==="CAO"?RED:imp==="MEDIUM"||imp==="TRUNG BÌNH"?AMBER:DIM;
   return(<div>
@@ -324,7 +327,7 @@ function CalendarTab({t,lang}){
 
 export default function App(){
   const[tab,setTab]=useState(0);const[lang,setLang]=useState("EN");
-  const t=TEXTS[lang];const prices=usePrices();const[tick,setTick]=useState("");
+  const t=TEXTS[lang];const{prices,isReal}=usePrices();const[tick,setTick]=useState("");
   useEffect(()=>{const u=()=>setTick(new Date().toLocaleTimeString("vi-VN",{hour:"2-digit",minute:"2-digit",second:"2-digit"}));u();const i=setInterval(u,1000);return()=>clearInterval(i);},[]);
   const TABS=[DashboardTab,MacroDeskTab,MacroViewTab,CalendarTab];const Active=TABS[tab];
   return(<div style={{minHeight:"100vh",background:BG,color:TEXT,fontFamily:"'Inter','Helvetica Neue',sans-serif"}}>
@@ -346,8 +349,15 @@ export default function App(){
         </div>
       </div>
       <div style={{borderTop:`1px solid ${BORDER}`,padding:"6px 28px",display:"flex",gap:28,overflowX:"auto",alignItems:"center"}}>
-        {INSTRS.map(ins=>{const pr=prices[ins.id];if(!pr)return null;return(<div key={ins.id} style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}><span style={{fontSize:10,color:DIM,fontWeight:600,letterSpacing:"0.06em"}}>{ins.id}</span><span style={{fontSize:12,fontFamily:"monospace",color:WHITE}}>{pr.price.toFixed(ins.dec).replace(/\B(?=(\d{3})+(?!\d))/g,",")}</span><span style={{fontSize:10,fontFamily:"monospace",color:pr.change>=0?GREEN:RED}}>{pr.change>=0?"+":""}{pr.change.toFixed(2)}%</span></div>);})}
-        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:5,flexShrink:0}}><div style={{width:6,height:6,borderRadius:"50%",background:GREEN,animation:"ktP 2s ease-in-out infinite"}}/><span style={{fontSize:10,color:GREEN,fontWeight:600,letterSpacing:"0.1em"}}>SIM</span></div>
+        {INSTRS.map(ins=>{const pr=prices[ins.id];if(!pr)return null;return(<div key={ins.id} style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
+          <span style={{fontSize:10,color:DIM,fontWeight:600,letterSpacing:"0.06em"}}>{ins.id}</span>
+          <span style={{fontSize:12,fontFamily:"monospace",color:WHITE}}>{pr.price.toFixed(ins.dec).replace(/\B(?=(\d{3})+(?!\d))/g,",")}</span>
+          <span style={{fontSize:10,fontFamily:"monospace",color:pr.change>=0?GREEN:RED}}>{pr.change>=0?"+":""}{pr.change.toFixed(2)}%</span>
+        </div>);})}
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+          <div style={{width:6,height:6,borderRadius:"50%",background:isReal?GREEN:AMBER,animation:"ktP 2s ease-in-out infinite"}}/>
+          <span style={{fontSize:10,color:isReal?GREEN:AMBER,fontWeight:600,letterSpacing:"0.1em"}}>{isReal?"LIVE":"SIM"}</span>
+        </div>
       </div>
     </header>
     <main style={{maxWidth:1320,margin:"0 auto",padding:"28px"}}><Active t={t} lang={lang} prices={prices}/></main>
