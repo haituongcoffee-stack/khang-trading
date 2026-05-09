@@ -6,10 +6,13 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return res.status(500).json({ error: 'API key not configured', text: '' })
+  if (!apiKey) return res.status(500).json({ text: '' })
 
   try {
     const { prompt, system } = req.body
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -18,15 +21,16 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: system || 'You are a professional trading analyst.',
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 500,
+        system: system || 'You are a trading analyst.',
         messages: [{ role: 'user', content: prompt }],
       }),
+      signal: controller.signal,
     })
+    clearTimeout(timeout)
     const data = await response.json()
-    const text = data.content?.[0]?.text || ''
-    return res.status(200).json({ text })
+    return res.status(200).json({ text: data.content?.[0]?.text || '' })
   } catch (err) {
     return res.status(200).json({ text: '', error: err.message })
   }
